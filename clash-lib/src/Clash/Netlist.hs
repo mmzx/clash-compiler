@@ -23,6 +23,7 @@ import qualified Control.Lens                     as Lens
 import           Control.Monad                    (join)
 import           Control.Monad.IO.Class           (liftIO)
 import           Control.Monad.State.Strict       (runStateT)
+import           Control.Monad.Trans.Except       (runExcept)
 import           Data.Binary.IEEE754              (floatToWord, doubleToWord)
 import           Data.Char                        (ord)
 import           Data.Either                      (partitionEithers)
@@ -58,7 +59,7 @@ import qualified Clash.Core.Term                  as Core
 import           Clash.Core.Type
   (Type (..), coreView1, splitFunTys, splitCoreFunForallTy)
 import           Clash.Core.TyCon                 (TyConMap)
-import           Clash.Core.Util                  (mkApps, termType)
+import           Clash.Core.Util                  (mkApps, termType, tySym)
 import           Clash.Core.Var                   (Id, Var (..))
 import           Clash.Core.VarEnv
   (VarEnv, eltsVarEnv, emptyInScopeSet, emptyVarEnv, extendVarEnv, lookupVarEnv,
@@ -309,18 +310,20 @@ mkDeclarations bndr e = do
   hty <- unsafeCoreTypeToHWTypeM' $(curLoc) (varType bndr)
   if isVoid hty && not (isBiSignalOut hty)
      then return []
-     else mkDeclarations' bndr e
+     else mkDeclarations' Nothing bndr e
 
 -- | Generate a list of Declarations for a let-binder
 mkDeclarations'
-  :: Id
+  :: Maybe Identifier
+  -- ^ Label
+  -> Id
   -- ^ LHS of the let-binder
   -> Term
   -- ^ RHS of the let-binder
   -> NetlistMonad [Declaration]
-mkDeclarations' bndr (Var v) = mkFunApp (id2identifier bndr) v []
+mkDeclarations' labelM bndr (Var v) = mkFunApp (id2identifier bndr) labelM v []
 
-mkDeclarations' _ e@(Case _ _ []) = do
+mkDeclarations' _ _ e@(Case _ _ []) = do
   (_,sp) <- Lens.use curCompNm
   throw $ ClashException
           sp
@@ -331,35 +334,46 @@ mkDeclarations' _ e@(Case _ _ []) = do
                     ])
           Nothing
 
-mkDeclarations' bndr (Case scrut altTy alts@(_:_:_)) =
+mkDeclarations' _ bndr (Case scrut altTy alts@(_:_:_)) =
   mkSelection (Right bndr) scrut altTy alts
 
-mkDeclarations' bndr app =
-  let (appF,(args,tyArgs)) = second partitionEithers $ collectArgs app
-  in case appF of
-    Var f
-      | null tyArgs -> mkFunApp (id2identifier bndr) f args
-      | otherwise   -> do
+mkDeclarations' labelM bndr app@(collectArgs -> (fun, args0))
+  | Prim "Clash.NamedTypes.name" _ <- fun
+  = do
+    tcm <- Lens.use tcCache
+    case args0 of
+      Right nm0 : Right _ : Left fun1 : args1
+        | Right nm1 <- runExcept (tySym tcm nm0)
+        -> mkDeclarations' (Just (StrictText.pack nm1)) bndr (mkApps fun1 args1)
+        | otherwise
+        -> mkDeclarations' Nothing bndr (mkApps fun args1)
+      _ -> do
+           (_,sp) <- Lens.use curCompNm
+           throw (ClashException sp ($(curLoc) ++ "Unexpected Clash.NamedTypes.name:\n\n" ++ showPpr app) Nothing)
+  | Var f <- fun
+  , let (tmArgs,tyArgs) = partitionEithers args0
+  = if null tyArgs
+       then mkFunApp (id2identifier bndr) labelM f tmArgs
+       else do
         (_,sp) <- Lens.use curCompNm
         throw (ClashException sp ($(curLoc) ++ "Not in normal form: Var-application with Type arguments:\n\n" ++ showPpr app) Nothing)
+  | otherwise
+  = do
     -- Do not generate any assignments writing to a BiSignalOut, as these
     -- do not have any significance in a HDL. The single exception occurs
     -- when writing to a BiSignal using the primitive 'writeToBiSignal'. In
     -- the generate HDL it will write to an inout port, NOT the variable
     -- having the actual type BiSignalOut.
-    -- _ | isBiSignalOut (id2type bndr) && (not $ isWriteToBiSignalPrimitive app) ->
-    --     return []
-    _ -> do
-      hwTy <- unsafeCoreTypeToHWTypeM' $(curLoc) (id2type bndr)
-      if isBiSignalOut hwTy && not (isWriteToBiSignalPrimitive app)
-         then return []
-         else do
-          (exprApp,declsApp) <- mkExpr False (Right bndr) (varType bndr) app
-          let dstId = id2identifier bndr
-              assn  = case exprApp of
-                        Identifier _ Nothing -> []
-                        _ -> [Assignment dstId exprApp]
-          return (declsApp ++ assn)
+    hwTy <- unsafeCoreTypeToHWTypeM' $(curLoc) (id2type bndr)
+    if isBiSignalOut hwTy && not (isWriteToBiSignalPrimitive app)
+       then return []
+       else do
+         (exprApp,declsApp) <- mkExpr False (Right bndr) (varType bndr) app
+         let dstId = id2identifier bndr
+             assn  = case exprApp of
+                       Identifier _ Nothing -> []
+                       _ -> [Assignment dstId exprApp]
+         return (declsApp ++ assn)
 
 -- | Generate a declaration that selects an alternative based on the value of
 -- the scrutinee
@@ -473,10 +487,11 @@ patPos reprs pat@(DataPat dataCon _ _) =
 -- | Generate a list of Declarations for a let-binder where the RHS is a function application
 mkFunApp
   :: Identifier -- ^ LHS of the let-binder
+  -> Maybe Identifier -- ^ Name of the label
   -> Id -- ^ Name of the applied function
   -> [Term] -- ^ Function arguments
   -> NetlistMonad [Declaration]
-mkFunApp dstId fun args = do
+mkFunApp dstId labelM fun args = do
   topAnns <- Lens.use topEntityAnns
   tcm     <- Lens.use tcCache
   case lookupVarEnv fun topAnns of
@@ -532,8 +547,9 @@ mkFunApp dstId fun args = do
                   outpAssign    = case compOutp of
                     Nothing -> []
                     Just (id_,hwtype) -> [(Identifier id_ Nothing,Out,hwtype,Identifier dstId Nothing)]
-              instLabel <- extendIdentifier Basic compName (StrictText.pack "_" `StrictText.append` dstId)
-              let instDecl      = InstDecl Entity Nothing compName instLabel [] (outpAssign ++ inpAssigns)
+              instLabelDef <- extendIdentifier Basic compName (StrictText.pack "_" `StrictText.append` dstId)
+              instLabel <- maybe (pure instLabelDef) (mkUniqueIdentifier Basic) labelM
+              let instDecl  = InstDecl Entity Nothing compName instLabel [] (outpAssign ++ inpAssigns)
               return (argDecls ++ argDecls' ++ [instDecl])
             else error $ $(curLoc) ++ "under-applied normalized function"
         Nothing -> case args of
@@ -586,6 +602,11 @@ mkExpr bbEasD bndr ty app = do
   (_,sp) <- Lens.use curCompNm
   case appF of
     Data dc -> mkDcApplication hwTy bndr dc tmArgs
+    Prim "Clash.NamedTypes.name" _
+      | Right _ : Right _ : Left fun : args1 <- args
+      -> mkExpr bbEasD bndr ty (mkApps fun args1)
+      | otherwise
+      -> throw (ClashException sp ($(curLoc) ++ "Unexpected Clash.NamedTypes.name:\n\n" ++ showPpr app) Nothing)
     Prim nm _ -> mkPrimitive False bbEasD bndr nm args ty
     Var f
       | null tmArgs -> return (Identifier (nameOcc $ varName f) Nothing,[])
@@ -595,7 +616,7 @@ mkExpr bbEasD bndr ty app = do
           argNm0 <- extendIdentifier Extended (either id id2identifier bndr) "_fun_arg"
           argNm1 <- mkUniqueIdentifier Extended argNm0
           hwTyA  <- unsafeCoreTypeToHWTypeM' $(curLoc) ty
-          decls  <- mkFunApp argNm1 f tmArgs
+          decls  <- mkFunApp argNm1 Nothing f tmArgs
           return (Identifier argNm1 Nothing, NetDecl' Nothing Wire argNm1 (Right hwTyA):decls)
     Case scrut ty' [alt] -> mkProjection bbEasD bndr scrut ty' alt
     Case scrut tyA alts -> do

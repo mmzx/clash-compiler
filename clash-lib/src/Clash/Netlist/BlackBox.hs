@@ -22,6 +22,7 @@ import           Control.Lens                  ((<<%=),(%=))
 import qualified Control.Lens                  as Lens
 import           Control.Monad                 (when)
 import           Control.Monad.IO.Class        (liftIO)
+import           Control.Monad.Trans.Except    (runExcept)
 import           Data.Char                     (ord)
 import           Data.Either                   (lefts, partitionEithers)
 import qualified Data.HashMap.Lazy             as HashMap
@@ -57,7 +58,7 @@ import           Clash.Core.Term               as C (Term (..), collectArgs)
 import           Clash.Core.Type               as C (Type (..), ConstTy (..),
                                                 splitFunTys)
 import           Clash.Core.TyCon              as C (tyConDataCons)
-import           Clash.Core.Util               (isFun, termType)
+import           Clash.Core.Util               (isFun, mkApps, termType, tySym)
 import           Clash.Core.Var                as V
   (Id, Var (..), mkLocalId, modifyVarName)
 import           Clash.Core.VarEnv
@@ -190,6 +191,15 @@ mkArgument bndr e = do
         (C.Literal (Int64Literal i), []) -> return ((N.Literal (Just (Signed 64,64)) (N.NumLit i),hwTy,True),[])
         (C.Literal (Word64Literal i), []) -> return ((N.Literal (Just (Unsigned 64,64)) (N.NumLit i),hwTy,True),[])
         (C.Literal (NaturalLiteral n), []) -> return ((N.Literal (Just (Unsigned iw,iw)) (N.NumLit n),hwTy,True),[])
+        (Prim "Clash.NamedTypes.name" _,args)
+          | Right _ : Right _ : Left fun : args1 <- args
+          -> mkArgument bndr (mkApps fun args1)
+          | otherwise
+          -> do
+             (_,sp) <- Lens.use curCompNm
+             let msg = $(curLoc) ++ "Unexpected Clash.NamedTypes.name:\n\n"
+                    ++ showPpr e
+             throw (ClashException sp msg Nothing)
         (Prim f _,args) -> do
           (e',d) <- mkPrimitive True False (Left bndr) f args ty
           case e' of
@@ -601,25 +611,40 @@ mkFunInput resId e = do
     Right (decl,wr) ->
       return ((Right decl,wr,[],[],[],bbCtx),dcls)
   where
-    goExpr app@(collectArgs -> (C.Var fun,args@(_:_))) = do
-      let (tmArgs,tyArgs) = partitionEithers args
-      if null tyArgs
-        then do
-          appDecls <- mkFunApp "~RESULT" fun tmArgs
-          nm <- mkUniqueIdentifier Basic "block"
-          return (Right ((nm,appDecls),Wire))
-        else do
-          (_,sp) <- Lens.use curCompNm
-          throw (ClashException sp ($(curLoc) ++ "Not in normal form: Var-application with Type arguments:\n\n" ++ showPpr app) Nothing)
-    goExpr e' = do
-      tcm <- Lens.use tcCache
-      let eType = termType tcm e'
-      (appExpr,appDecls) <- mkExpr False (Left "c$bb_res") eType e'
-      let assn = Assignment "~RESULT" appExpr
-      nm <- if null appDecls
-               then return ""
-               else mkUniqueIdentifier Basic "block"
-      return (Right ((nm,appDecls ++ [assn]),Wire))
+    goExpr labelM app@(collectArgs -> (fun,args0))
+      | C.Prim "Clash.NamedTypes.name" _ <- fun
+      = do
+        tcm <- Lens.use tcCache
+        case args0 of
+          Right nm0 : Right _ : Left fun1 : args1
+            | Right nm1 <- runExcept (tySym tcm nm0)
+            -> goExpr (Just (TextS.pack nm1)) (mkApps fun1 args1)
+            | otherwise
+            -> goExpr Nothing (mkApps fun1 args1)
+          _ -> do
+               (_,sp) <- Lens.use curCompNm
+               throw (ClashException sp ($(curLoc) ++ "Unexpected Clash.NamedTypes.name:\n\n" ++ showPpr app) Nothing)
+      | C.Var f <- fun
+      , (_:_) <- args0
+      , let (tmArgs,tyArgs) = partitionEithers args0
+      = if null tyArgs
+           then do
+             appDecls <- mkFunApp "~RESULT" labelM f tmArgs
+             nm <- mkUniqueIdentifier Basic "block"
+             return (Right ((nm,appDecls),Wire))
+           else do
+             (_,sp) <- Lens.use curCompNm
+             throw (ClashException sp ($(curLoc) ++ "Not in normal form: Var-application with Type arguments:\n\n" ++ showPpr app) Nothing)
+      | otherwise
+      = do
+        tcm <- Lens.use tcCache
+        let eType = termType tcm app
+        (appExpr,appDecls) <- mkExpr False (Left "c$bb_res") eType app
+        let assn = Assignment "~RESULT" appExpr
+        nm <- if null appDecls
+                 then return ""
+                 else mkUniqueIdentifier Basic "block"
+        return (Right ((nm,appDecls ++ [assn]),Wire))
 
     go is0 n (Lam id_ e') = do
       lvl <- Lens.use curBBlvl
@@ -677,12 +702,12 @@ mkFunInput resId e = do
         goR r id_ | id_ == r  = id_ {varName = mkUnsafeSystemName "~RESULT" 0}
                   | otherwise = id_
 
-    go _ _ e'@(App {}) = goExpr e'
-    go _ _ e'@(C.Data {}) = goExpr e'
-    go _ _ e'@(C.Literal {}) = goExpr e'
-    go _ _ e'@(Cast {}) = goExpr e'
-    go _ _ e'@(Prim {}) = goExpr e'
-    go _ _ e'@(TyApp {}) = goExpr e'
+    go _ _ e'@(App {}) = goExpr Nothing e'
+    go _ _ e'@(C.Data {}) = goExpr Nothing e'
+    go _ _ e'@(C.Literal {}) = goExpr Nothing e'
+    go _ _ e'@(Cast {}) = goExpr Nothing e'
+    go _ _ e'@(Prim {}) = goExpr Nothing e'
+    go _ _ e'@(TyApp {}) = goExpr Nothing e'
 
     go _ _ e'@(Case _ _ []) =
       error $ $(curLoc) ++ "Cannot make function input for case without alternatives: " ++ show e'

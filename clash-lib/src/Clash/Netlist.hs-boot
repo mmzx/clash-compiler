@@ -61,6 +61,7 @@ mkDeclarations :: Id -> Term -> NetlistMonad [Declaration]
 
 mkFunApp
   :: Identifier -- ^ LHS of the let-binder
+  -> Maybe Identifier -- ^ Maybe component label
   -> Id -- ^ Name of the applied function
   -> [Term] -- ^ Function arguments
   -> NetlistMonad [Declaration]

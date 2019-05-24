@@ -33,19 +33,40 @@ fifo @System
 
 -}
 
-{-# LANGUAGE PolyKinds     #-}
-{-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE DataKinds      #-}
+{-# LANGUAGE ExplicitForAll #-}
+{-# LANGUAGE PolyKinds      #-}
+{-# LANGUAGE TypeOperators  #-}
 
 {-# LANGUAGE Safe #-}
 
 {-# OPTIONS_HADDOCK show-extensions #-}
 
 module Clash.NamedTypes
-  ((:::))
+  ( (:::)
+  , name
+  )
 where
+
+import GHC.TypeLits (Symbol)
+
 
 type (name :: k) ::: a = a
 -- ^ Annotate a type with a name
+
+
+-- | Name entity (VHDL) or module (Verilog) instantiation (best-effort)
+--
+-- Do
+--
+-- @
+-- 'name' \@"foo" f x y
+-- @
+--
+-- To label that particular instantiation of /f/ with /foo/
+name :: forall (name :: Symbol) a . a -> name ::: a
+name = id
+{-# NOINLINE name #-}
 
 {- $setup
 >>> :set -XDataKinds -XTypeOperators -XNoImplicitPrelude

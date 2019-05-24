@@ -748,6 +748,13 @@ tyNatSize m (coreView1 m -> Just ty) = tyNatSize m ty
 tyNatSize _ (LitTy (NumTy i))        = return i
 tyNatSize _ ty = throwE $ $(curLoc) ++ "Cannot reduce to an integer:\n" ++ showPpr ty
 
+tySym
+  :: TyConMap
+  -> Type
+  -> Except String String
+tySym m (coreView1 m -> Just ty) = tySym m ty
+tySym _ (LitTy (SymTy s))     = return s
+tySym _ ty = throwE $ $(curLoc) ++ "Cannot reduce to a string:\n" ++ showPpr ty
 
 mkUniqSystemTyVar
   :: (Supply, InScopeSet)
