@@ -28,20 +28,23 @@ import SrcLoc               (SrcSpan)
 genComponent :: Id
              -> NetlistMonad ([Bool],SrcSpan,HashMap Identifier Word,Component)
 
-mkExpr :: Bool
+mkExpr :: Maybe Identifier
+       -> Bool
        -> Either Identifier Id
        -> Type
        -> Term
        -> NetlistMonad (Expr,[Declaration])
 
-mkDcApplication :: HWType
+mkDcApplication :: Maybe Identifier
+                -> HWType
                 -> Either Identifier Id
                 -> DataCon
                 -> [Term]
                 -> NetlistMonad (Expr,[Declaration])
 
 mkProjection
-  :: Bool
+  :: Maybe Identifier
+  -> Bool
   -> Either Identifier Id
   -> Term
   -> Type
@@ -49,7 +52,8 @@ mkProjection
   -> NetlistMonad (Expr, [Declaration])
 
 mkSelection
-  :: Either Identifier Id
+  :: Maybe Identifier
+  -> Either Identifier Id
   -> Term
   -> Type
   -> [Alt]

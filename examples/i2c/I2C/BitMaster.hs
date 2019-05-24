@@ -102,7 +102,7 @@ bitMasterT s@(BitS { _stateMachine = StateMachine  {..}
      clkEn .= False
 
   -- bus status controller
-  zoom busState (busStatusCtrl rst ena clkCnt cmd _clkEn i2cI _bitStateM _sdaChk _sdaOen)
+  zoom busState (name @"mies" busStatusCtrl rst ena clkCnt cmd _clkEn i2cI _bitStateM _sdaChk _sdaOen)
 
   -- generate dout signal, store dout on rising edge of SCL
   when (sSCL == high && dSCL == low) $
