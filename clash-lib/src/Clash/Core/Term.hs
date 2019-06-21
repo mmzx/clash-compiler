@@ -34,6 +34,7 @@ import Data.Either                             (lefts, rights)
 import Data.Hashable                           (Hashable)
 import Data.Text                               (Text)
 import GHC.Generics
+import SrcLoc                                  (SrcSpan)
 
 -- Internal Modules
 import Clash.Core.DataCon                      (DataCon)
@@ -56,6 +57,7 @@ data Term
   | Case    !Term !Type [Alt]               -- ^ Case-expression: subject, type of
                                             -- alternatives, list of alternatives
   | Cast    !Term !Type !Type               -- ^ Cast a term from one type to another
+  | Tick    !SrcSpan !Term                  -- ^ Location-annotated term
   deriving (Show,Generic,NFData,Hashable,Binary)
 
 data PrimInfo
@@ -119,6 +121,8 @@ data CoreContext
   -- ^ Subject of a case-decomposition
   | CastBody
   -- ^ Body of a Cast
+  | TickC SrcSpan
+  -- ^ Body of a Tick
   deriving (Show, Generic, NFData, Hashable, Binary)
 
 -- | A list of @CoreContext@ describes the complete navigation path from the
@@ -148,6 +152,7 @@ instance Eq CoreContext where
     (CaseAlt p,       CaseAlt p')        -> p == p'
     (CaseScrut,       CaseScrut)         -> True
     (CastBody,        CastBody)          -> True
+    (TickC sp,        TickC sp')         -> sp == sp'
     (_,               _)                 -> False
 
 -- | Is the Context a Lambda/Term-abstraction context?
@@ -162,6 +167,7 @@ collectArgs = go []
   where
     go args (App e1 e2) = go (Left e2:args) e1
     go args (TyApp e t) = go (Right t:args) e
+    go args (Tick _ e)  = go args e
     go args e           = (e, args)
 
 -- | Given a function application, find the primitive it's applied. Yields

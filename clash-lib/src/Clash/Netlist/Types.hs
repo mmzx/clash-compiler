@@ -253,6 +253,8 @@ data Declaration
       !Identifier                -- Name of signal
       (Either Identifier HWType) -- Pointer to type of signal or type of signal
       -- ^ Signal declaration
+  | TickDecl Identifier
+  -- ^ HDL tick corresponding to a Core tick
   deriving Show
 
 data EntityOrComponent = Entity | Comp

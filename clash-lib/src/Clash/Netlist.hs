@@ -58,7 +58,7 @@ import qualified Clash.Core.Term                  as Core
 import           Clash.Core.Type
   (Type (..), coreView1, splitFunTys, splitCoreFunForallTy)
 import           Clash.Core.TyCon                 (TyConMap)
-import           Clash.Core.Util                  (mkApps, termType)
+import           Clash.Core.Util                  (mkApps, stripTicks, termType)
 import           Clash.Core.Var                   (Id, Var (..))
 import           Clash.Core.VarEnv
   (VarEnv, eltsVarEnv, emptyInScopeSet, emptyVarEnv, extendVarEnv, lookupVarEnv,
@@ -265,16 +265,17 @@ mkNetDecl (id_,tm) = do
   wr   <- termToWireOrReg tm
   if isVoid hwTy
      then return Nothing
-     else return . Just $ NetDecl' (addSrcNote (nameLoc nm))
+     else return . Just $ NetDecl' (addSrcNote sp)
              wr
              (id2identifier id_)
              (Right hwTy)
 
   where
     nm = varName id_
+    sp = case tm of {Tick s _ -> s; _ -> nameLoc nm}
 
     termToWireOrReg :: Term -> NetlistMonad WireOrReg
-    termToWireOrReg (Case scrut _ alts0@(_:_:_)) = do
+    termToWireOrReg (stripTicks -> Case scrut _ alts0@(_:_:_)) = do
       tcm <- Lens.use tcCache
       let scrutTy = termType tcm scrut
       scrutHTy <- unsafeCoreTypeToHWTypeM' $(curLoc) scrutTy
@@ -308,6 +309,7 @@ mkDeclarations
   -> Term
   -- ^ RHS of the let-binder
   -> NetlistMonad [Declaration]
+mkDeclarations bndr (Tick sp e) = (TickDecl (StrictText.pack (showSDocUnsafe (ppr sp))):) <$> mkDeclarations bndr e
 mkDeclarations bndr e = do
   hty <- unsafeCoreTypeToHWTypeM' $(curLoc) (varType bndr)
   if isVoid hty && not (isBiSignalOut hty)
@@ -566,6 +568,7 @@ mkExpr :: HasCallStack
        -> Type -- ^ Type of the LHS of the let-binder
        -> Term -- ^ Term to convert to an expression
        -> NetlistMonad (Expr,[Declaration]) -- ^ Returned expression and a list of generate BlackBox declarations
+mkExpr bbEasD bndr ty (Tick _ e) = mkExpr bbEasD bndr ty e
 mkExpr _ _ _ (Core.Literal l) = do
   iw <- Lens.use intWidth
   case l of

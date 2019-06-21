@@ -105,6 +105,7 @@ findAccidentialShadows =
     App t1 t2   -> concatMap findAccidentialShadows [t1, t2]
     TyApp t _   -> findAccidentialShadows t
     Cast t _ _  -> findAccidentialShadows t
+    Tick _ t    -> findAccidentialShadows t
     Case t _ as ->
       concatMap (findInPat . fst) as ++
         concatMap findAccidentialShadows (t : map snd as)

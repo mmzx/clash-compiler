@@ -278,6 +278,7 @@ termType m e = case e of
   Letrec _ e'    -> termType m e'
   Case _ ty _    -> ty
   Cast _ _ ty2   -> ty2
+  Tick _ e'      -> termType m e'
 
 -- | Split a (Type)Abstraction in the bound variables and the abstracted term
 collectBndrs :: Term
@@ -516,6 +517,7 @@ termSize (TyLam _ e)  = termSize e
 termSize (App e1 e2)  = termSize e1 + termSize e2
 termSize (TyApp e _)  = termSize e
 termSize (Cast e _ _) = termSize e
+termSize (Tick _ e)   = termSize e
 termSize (Letrec bndrs e) = sum (bodySz:bndrSzs)
  where
   bndrSzs = map (termSize . snd) bndrs
@@ -897,3 +899,7 @@ undefinedTm
   :: Type
   -> Term
 undefinedTm = TyApp (Prim "Clash.Transformation." (PrimInfo undefinedTy WorkNever))
+
+stripTicks :: Term -> Term
+stripTicks (Tick _ e) = stripTicks e
+stripTicks e = e

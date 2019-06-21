@@ -48,7 +48,7 @@ import           Clash.Core.VarEnv
 import           Clash.Driver.Types                      (BindingMap)
 import           Prelude                                 hiding (lookup)
 import           Clash.Unique
-import           Clash.Util                              (curLoc)
+import           Clash.Util                              (SrcSpan, curLoc)
 import           Clash.Pretty
 
 -- | The heap
@@ -70,6 +70,7 @@ data StackFrame
   | Instantiate Type
   | PrimApply  Text PrimInfo [Type] [Value] [Term]
   | Scrutinise Type [Alt]
+  | Tickish SrcSpan
   deriving Show
 
 instance ClashPretty StackFrame where
@@ -85,6 +86,8 @@ instance ClashPretty StackFrame where
   clashPretty (Scrutinise a b) =
     hsep ["Scrutinise ", fromPpr a,
           fromPpr (Case (Literal (CharLiteral '_')) a b)]
+  clashPretty (Tickish sp) =
+    hsep ["Tick", fromPpr sp]
 
 -- Values
 data Value
@@ -163,6 +166,7 @@ whnf eval tcm isSubj (h,k,e) =
 isScrut :: Stack -> Bool
 isScrut (Scrutinise {}:_) = True
 isScrut (PrimApply {} :_) = True
+isScrut (Tickish {}:k) = isScrut k
 isScrut _ = False
 
 -- | Completely unwind the stack to get back the complete term
@@ -200,6 +204,8 @@ unwindStack (h@(Heap gh gbl h' ids is),(kf:k'),e) = case kf of
     unwindStack (Heap gh gbl (extendVarEnv x e h') ids is,k',e)
   GUpdate _ ->
     unwindStack (h,k',e)
+  Tickish sp ->
+    unwindStack (h,k',Tick sp e)
 
 {- [Note: forcing special primitives]
 Clash uses the `whnf` function in two places (for now):
@@ -296,6 +302,7 @@ step eval tcm (h, k, e) = case e of
   (TyApp e1 ty) -> Just (h,Instantiate ty:k,e1)
   (Case scrut ty alts) -> Just (h,Scrutinise ty alts:k,scrut)
   (Letrec bs e') -> Just (allocate h k bs e')
+  Tick sp e' -> Just (h,Tickish sp:k,e')
   Cast _ _ _ -> trace (unlines ["WARNING: " ++ $(curLoc) ++ "Clash currently can't symbolically evaluate casts"
                                     ,"If you have testcase that produces this message, please open an issue about it."]) Nothing
 
@@ -362,6 +369,8 @@ unwind eval tcm h k v = do
     Instantiate ty               -> return (instantiate h k' v ty)
     PrimApply nm ty tys vals tms -> primop eval tcm h k' nm ty tys vals v tms
     Scrutinise _ alts            -> return (scrutinise h k' v alts)
+    -- Adding back the Tick constructor will make the evaluator loop
+    Tickish _                    -> return (h,k',valToTerm v)
 
 -- | Update the Heap with the evaluated term
 update :: Heap -> Stack -> Id -> Value -> State

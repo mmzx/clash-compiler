@@ -108,7 +108,7 @@ import           Clash.Core.Util
   (isCon, isFun, isLet, isPolyFun, isPrim,
    isSignalType, isVar, mkApps, mkLams, mkVec, piResultTy, termSize, termType,
    tyNatSize, patVars, isAbsurdAlt, altEqs, substInExistentialsList,
-   solveNonAbsurds, patIds, isLocalVar, undefinedTm)
+   solveNonAbsurds, patIds, isLocalVar, undefinedTm, stripTicks)
 import           Clash.Core.Var
   (Id, Var (..), isGlobalId, isLocalId, mkLocalId)
 import           Clash.Core.VarEnv
@@ -341,7 +341,7 @@ elemExistentials _ e = return e
 
 -- | Move a Case-decomposition from the subject of a Case-decomposition to the alternatives
 caseCase :: HasCallStack => NormRewrite
-caseCase _ e@(Case (Case scrut alts1Ty alts1) alts2Ty alts2)
+caseCase _ e@(Case (stripTicks -> Case scrut alts1Ty alts1) alts2Ty alts2)
   = do
     ty1Rep <- representableType <$> Lens.view typeTranslator
                                 <*> Lens.view customReprs
@@ -462,7 +462,7 @@ caseCon (TransformContext is0 _) (Case scrut ty alts)
           isN1 = extendInScopeSet isN0 x'
       in  ((isN1,(x,Var x'):substN),(x',arg))
 
-caseCon _ c@(Case (Literal l) _ alts) = case List.find (equalLit . fst) alts of
+caseCon _ c@(Case (stripTicks -> Literal l) _ alts) = case List.find (equalLit . fst) alts of
     Just (LitPat _,e) -> changed e
     _ -> matchLiteralContructor c l alts
   where
@@ -483,7 +483,7 @@ caseCon ctx@(TransformContext is0 _) e@(Case subj ty alts)
     case whnf' primEval bndrs tcm gh ids1 is0 True subj of
       (gh',ph',v) -> do
         globalHeap Lens..= gh'
-        bindPureHeap ctx tcm ph' $ \ctx' -> case v of
+        bindPureHeap ctx tcm ph' $ \ctx' -> case stripTicks v of
           Literal l -> caseCon ctx' (Case (Literal l) ty alts)
           subj' -> case collectArgs subj' of
             (Data _,_) -> caseCon ctx' (Case subj' ty alts)
@@ -678,7 +678,7 @@ nonRepANF ctx e@(App appConPrim arg)
   , isCon conPrim || isPrim conPrim
   = do
     untranslatable <- isUntranslatable False arg
-    case (untranslatable,arg) of
+    case (untranslatable,stripTicks arg) of
       (True,Letrec binds body) -> changed (Letrec binds (App appConPrim body))
       (True,Case {})  -> specializeNorm ctx e
       (True,Lam {})   -> specializeNorm ctx e
@@ -805,7 +805,7 @@ removeUnusedExpr _ e = return e
 bindConstantVar :: HasCallStack => NormRewrite
 bindConstantVar = inlineBinders test
   where
-    test _ (_, e) = case isLocalVar e of
+    test _ (_,stripTicks -> e) = case isLocalVar e of
       True -> return True
       _    -> isConstantNotClockReset e >>= \case
         True -> Lens.use (extra.inlineConstantLimit) >>= \case
@@ -816,14 +816,14 @@ bindConstantVar = inlineBinders test
 
 -- | Push a cast over a case into it's alternatives.
 caseCast :: HasCallStack => NormRewrite
-caseCast _ (Cast (Case subj ty alts) ty1 ty2) = do
+caseCast _ (Cast (stripTicks -> Case subj ty alts) ty1 ty2) = do
   let alts' = map (\(p,e) -> (p, Cast e ty1 ty2)) alts
   changed (Case subj ty alts')
 caseCast _ e = return e
 
 -- | Push a cast over a Letrec into it's body
 letCast :: HasCallStack => NormRewrite
-letCast _ (Cast (Letrec binds body) ty1 ty2) =
+letCast _ (Cast (stripTicks -> Letrec binds body) ty1 ty2) =
   changed $ Letrec binds (Cast body ty1 ty2)
 letCast _ e = return e
 
@@ -842,7 +842,7 @@ letCast _ e = return e
 --     where f' x' = (\x -> g x) (cast x')
 -- @
 argCastSpec :: HasCallStack => NormRewrite
-argCastSpec ctx e@(App _ (Cast e' _ _)) = case e' of
+argCastSpec ctx e@(App _ (stripTicks -> Cast e' _ _)) = case e' of
   Var {} -> go
   Cast (Var {}) _ _ -> go
   _ -> warn go
@@ -862,7 +862,7 @@ argCastSpec _ e = return e
 inlineCast :: HasCallStack => NormRewrite
 inlineCast = inlineBinders test
   where
-    test _ (_, (Cast (Var {}) _ _)) = return True
+    test _ (_, (Cast (stripTicks -> Var {}) _ _)) = return True
     test _ _ = return False
 
 -- | Eliminate two back to back casts where the type going in and coming out are the same
@@ -871,7 +871,7 @@ inlineCast = inlineBinders test
 --   (cast :: b -> a) $ (cast :: a -> b) x   ==> x
 -- @
 eliminateCastCast :: HasCallStack => NormRewrite
-eliminateCastCast _ c@(Cast (Cast e tyA tyB) tyB' tyC) = do
+eliminateCastCast _ c@(Cast (stripTicks -> Cast e tyA tyB) tyB' tyC) = do
   tcm <- Lens.view tcCache
   let ntyA  = normalizeType tcm tyA
       ntyB  = normalizeType tcm tyB
@@ -907,7 +907,7 @@ splitCastWork ctx@(TransformContext is0 _) unchanged@(Letrec vs e') = do
       :: InScopeSet
       -> LetBinding
       -> RewriteMonad extra [LetBinding]
-    splitCastLetBinding isN x@(nm, e) = case e of
+    splitCastLetBinding isN x@(nm, e) = case stripTicks e of
       Cast (Var {}) _ _  -> return [x]  -- already work-free
       Cast (Cast {}) _ _ -> return [x]  -- casts will be eliminated
       Cast e0 ty1 ty2 -> do
@@ -1134,6 +1134,9 @@ appProp _ (TyApp (Case scrut altsTy alts) ty) = do
   let ty' = piResultTy tcm altsTy ty
   changed (Case scrut ty' alts')
 
+appProp _ (App (Tick _ e) arg) = changed (App e arg)
+appProp _ (TyApp (Tick _ e) ty) = changed (TyApp e ty)
+
 appProp _ e = return e
 
 -- | Unlike 'appProp', which propagates a single argument in an application one
@@ -1188,6 +1191,10 @@ appPropFast ctx@(TransformContext is _) = \case
         let vbs = map fst vs
             is1 = extendInScopeSetList is0 vbs
         Letrec vs . Case scrut ty1 <$> mapM (goAlt is1 args1) alts
+
+  go is0 (Tick _ e) args = do
+    setChanged
+    go is0 e args
 
   go _ fun args = return (mkApps fun args)
 
@@ -2222,7 +2229,7 @@ flattenLet (TransformContext is0 _) letrec@(Letrec _ _) = do
     _ -> return (Letrec binds' body)
   where
     go :: InScopeSet -> LetBinding -> NormalizeSession [LetBinding]
-    go isN (id_,Letrec binds' body') = do
+    go isN (id_,stripTicks -> Letrec binds' body') = do
       let bodyOccs = Lens.foldMapByOf
                        freeLocalIds (unionVarEnvWith (+))
                        emptyVarEnv (`unitVarEnv` (1 :: Int))

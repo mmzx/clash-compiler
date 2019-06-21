@@ -61,7 +61,8 @@ import           Clash.Core.TyCon
   (TyConName, TyConMap, tyConDataCons)
 import           Clash.Core.Type         (Type (..), TypeView (..), LitTy (..),
                                           coreView1, splitTyConAppM, tyView, TyVar)
-import           Clash.Core.Util         (collectBndrs, termType, tyNatSize)
+import           Clash.Core.Util
+  (collectBndrs, stripTicks, termType, tyNatSize)
 import           Clash.Core.Var
   (Id, Var (..), mkLocalId, modifyVarName, Attr')
 import           Clash.Core.VarEnv
@@ -116,7 +117,7 @@ splitNormalized
   -> (Either String ([Id],[LetBinding],Id))
 splitNormalized tcm expr = case collectBndrs expr of
   (args,Letrec xes e)
-    | (tmArgs,[]) <- partitionEithers args -> case e of
+    | (tmArgs,[]) <- partitionEithers args -> case stripTicks e of
         Var v -> Right (tmArgs,xes,v)
         _     -> Left ($(curLoc) ++ "Not in normal form: res not simple var")
     | otherwise -> Left ($(curLoc) ++ "Not in normal form: tyArgs")

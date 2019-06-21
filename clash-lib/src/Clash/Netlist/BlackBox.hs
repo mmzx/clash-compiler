@@ -677,6 +677,8 @@ mkFunInput resId e = do
         goR r id_ | id_ == r  = id_ {varName = mkUnsafeSystemName "~RESULT" 0}
                   | otherwise = id_
 
+    go is0 n (Tick _ e') = go is0 n e'
+
     go _ _ e'@(App {}) = goExpr e'
     go _ _ e'@(C.Data {}) = goExpr e'
     go _ _ e'@(C.Literal {}) = goExpr e'
