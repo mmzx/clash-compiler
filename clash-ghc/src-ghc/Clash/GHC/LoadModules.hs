@@ -179,6 +179,7 @@ loadModules tmpDir useColor hdl modName dflagsM idirs = do
 
     let dflags1 = dflags
                     { DynFlags.optLevel = 2
+                    , DynFlags.debugLevel = 1
                     , DynFlags.ghcMode  = GHC.CompManager
                     , DynFlags.ghcLink  = GHC.LinkInMemory
                     , DynFlags.hscTarget
