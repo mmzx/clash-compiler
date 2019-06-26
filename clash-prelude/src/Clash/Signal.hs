@@ -68,6 +68,7 @@ Check out 'IntelSystem' and 'XilinxSystem' too!
 
 {-# LANGUAGE ConstraintKinds       #-}
 {-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE ExplicitNamespaces    #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE GADTs                 #-}
 {-# LANGUAGE KindSignatures        #-}
@@ -76,6 +77,7 @@ Check out 'IntelSystem' and 'XilinxSystem' too!
 {-# LANGUAGE RankNTypes            #-}
 {-# LANGUAGE ScopedTypeVariables   #-}
 {-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeOperators         #-}
 
 {-# LANGUAGE FlexibleInstances #-}
 
@@ -200,6 +202,8 @@ module Clash.Signal
     -- * List \<-\> Signal conversion (not synthesizable)
   , sample
   , sampleN
+  , sampleReset
+  , sampleResetN
   , fromList
     -- ** lazy versions
   , sample_lazy
@@ -221,7 +225,7 @@ module Clash.Signal
 where
 
 import           GHC.TypeLits
-  (KnownNat, KnownSymbol, AppendSymbol, Symbol)
+  (KnownNat, KnownSymbol, AppendSymbol, Symbol, type (<=))
 import           Data.Bits             (Bits) -- Haddock only
 import           Data.Maybe            (isJust, fromJust)
 import           Data.Proxy            (Proxy(..))
@@ -233,7 +237,7 @@ import           Clash.Explicit.Signal
   (System, resetSynchronizer, systemClockGen, systemResetGen, tbSystemClockGen)
 import qualified Clash.Explicit.Signal as S
 import           Clash.Hidden
-import           Clash.Promoted.Nat    (SNat (..))
+import           Clash.Promoted.Nat    (SNat (..), snatToNum)
 import           Clash.Promoted.Symbol (SSymbol (..))
 import           Clash.Signal.Bundle   (Bundle (..))
 import           Clash.Signal.BiSignal --(BisignalIn, BisignalOut, )
@@ -1045,15 +1049,57 @@ sampleN
    . ( KnownDomain dom
      , Undefined a )
   => Int
-  -- ^ The number of samples we want to see
-  -> (HiddenClockResetEnable dom  => Signal dom a)
-  -- ^ 'Signal' we want to sample, whose source potentially has a hidden clock
+  -- ^ Number of samples to produce
+  -> (HiddenClockResetEnable dom => Signal dom a)
+  -- ^ 'Signal' to sample, whose source potentially has a hidden clock
   -- (and reset)
   -> [a]
 sampleN n s0 =
   let s1 = exposeClockResetEnable s0 clockGen (resetGen @dom) enableGen in
   S.sampleN n s1
 {-# NOINLINE sampleN #-}
+
+-- | Get a list of samples from a 'Signal', while asserting the reset line
+-- for /n/ clock cycles. 'sampleReset' does not return the first /n/ cycles,
+-- i.e., when the reset is asserted.
+--
+-- __NB__: This function is not synthesizable
+sampleReset
+  :: forall dom a n
+   . ( KnownDomain dom
+     , Undefined a
+     , 1 <= n )
+  => SNat n
+  -- ^ Number of cycles to assert the reset
+  -> (HiddenClockResetEnable dom => Signal dom a)
+  -- ^ 'Signal' to sample, whose source potentially has a hidden clock
+  -- (and reset)
+  -> [a]
+sampleReset nReset f0 =
+  let f1 = exposeClockResetEnable f0 clockGen (resetGenN @dom nReset) enableGen in
+  drop (snatToNum nReset) (S.sample f1)
+{-# NOINLINE sampleReset #-}
+
+-- | Get a fine list of /m/ samples from a 'Signal', while asserting the reset line
+-- for /n/ clock cycles. 'sampleReset' does not return the first /n/ cycles,
+-- i.e., while the reset is asserted.
+--
+-- __NB__: This function is not synthesizable
+sampleResetN
+  :: forall dom a n
+   . ( KnownDomain dom
+     , Undefined a
+     , 1 <= n )
+  => SNat n
+  -- ^ Number of cycles to assert the reset
+  -> Int
+  -- ^ Number of samples to produce
+  -> (HiddenClockResetEnable dom => Signal dom a)
+  -- ^ 'Signal' to sample, whose source potentially has a hidden clock
+  -- (and reset)
+  -> [a]
+sampleResetN nReset nSamples f =
+  take nSamples (sampleReset nReset f)
 
 -- | /Lazily/ get an infinite list of samples from a 'Clash.Signal.Signal'
 --
