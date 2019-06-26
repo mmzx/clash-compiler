@@ -22,12 +22,20 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 {-# LANGUAGE TemplateHaskell        #-}
 {-# LANGUAGE TypeApplications       #-}
 {-# LANGUAGE TypeFamilies           #-}
+{-# LANGUAGE TypeOperators          #-}
 {-# LANGUAGE ViewPatterns           #-}
+#if __GLASGOW_HASKELL__ >= 806
+{-# LANGUAGE NoStarIsType #-}
+#endif
 #if __GLASGOW_HASKELL__ < 806
 {-# LANGUAGE TypeInType #-}
 #endif
 
 {-# LANGUAGE Unsafe #-}
+
+{-# OPTIONS_GHC -fplugin=GHC.TypeLits.Extra.Solver #-}
+{-# OPTIONS_GHC -fplugin=GHC.TypeLits.Normalise #-}
+{-# OPTIONS_GHC -fplugin=GHC.TypeLits.KnownNat.Solver #-}
 
 -- See: https://github.com/clash-lang/clash-compiler/commit/721fcfa9198925661cd836668705f817bddaae3c
 -- as to why we need this.
@@ -98,6 +106,7 @@ module Clash.Signal.Internal
   , tbClockGen
   , tbEnableGen
   , resetGen
+  , resetGenN
     -- * Boolean connectives
   , (.&&.), (.||.)
     -- * Simulation functions (not synthesizable)
@@ -144,13 +153,13 @@ import Data.Data                  (Data)
 import Data.Default.Class         (Default (..))
 import Data.Hashable              (Hashable)
 import GHC.Generics               (Generic)
-import GHC.TypeLits               (KnownSymbol, Nat, Symbol)
+import GHC.TypeLits               (KnownSymbol, Nat, Symbol, type (<=))
 import Language.Haskell.TH.Syntax -- (Lift (..), Q, Dec)
 import Numeric.Natural            (Natural)
 import Test.QuickCheck            (Arbitrary (..), CoArbitrary(..), Property,
                                    property)
 
-import Clash.Promoted.Nat         (SNat (..), snatToNum, snatToNatural)
+import Clash.Promoted.Nat         (SNat (..), snatToNum, snatToNatural, mulSNat)
 import Clash.Promoted.Symbol      (SSymbol (..), ssymbolToString)
 import Clash.XException
   (Undefined, errorX, deepseqX, defaultSeqX, deepErrorX)
@@ -868,13 +877,51 @@ resetGen
   :: forall dom
    . KnownDomain dom
   => Reset dom
-resetGen =
-  if isActiveHigh @dom then
-    Reset (True :- pure False)
-  else
-    Reset (False :- pure True)
-{-# NOINLINE resetGen #-}
-{-# ANN resetGen hasBlackBox #-}
+resetGen = resetGenN (SNat @1)
+{-# INLINE resetGen #-}
+
+-- | Primitive for 'resetGenN'
+resetGenN#
+  :: KnownDomain dom
+  => SNat resetPeriod
+  -- ^ Number of cycles times clock period
+  -> SNat clockPeriod
+  -- ^ Clock period
+  -> Reset dom
+resetGenN# (snatToNum -> rstPeriod) (snatToNum -> clkPeriod) =
+  -- We can't use multiply in VHDL to construct the resetPeriod, so we'll
+  -- do it in Haskell instead. By using 'quot' (instead of passing 'n' from
+  -- resetGenN in here directly) we make sure GHC doesn't optimize it away.
+  let asserted = replicate (quot rstPeriod clkPeriod) True in
+  unsafeFromHighPolarity (fromList (asserted ++ repeat False))
+{-# ANN resetGenN# hasBlackBox #-}
+{-# NOINLINE resetGenN# #-}
+
+-- | Generate reset that's asserted for the first /n/ cycles.
+--
+-- To be used like:
+--
+-- @
+-- rstSystem5 = resetGen @System (SNat @5)
+-- @
+--
+-- Example usage:
+--
+-- >>> sampleN 7 (unsafeToHighPolarity (resetGenN @System (SNat @3)))
+-- [True,True,True,False,False,False,False]
+--
+resetGenN
+  :: forall dom n
+   . (KnownDomain dom, 1 <= n)
+  => SNat n
+  -- ^ Number of initial cycles to hold reset high
+  -> Reset dom
+resetGenN n =
+  case knownDomain @dom of
+    SDomainConfiguration _ period _ _ _ _ ->
+      resetGenN# (n `mulSNat` period) period
+{-# INLINE resetGenN #-}
+
 
 -- | A reset signal belonging to a domain called /dom/.
 --
