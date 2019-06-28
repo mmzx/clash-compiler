@@ -208,6 +208,7 @@ module Clash.Signal
   , sampleReset
   , sampleResetN
   , fromList
+  , fromListReset
     -- ** lazy versions
   , sample_lazy
   , sampleN_lazy
@@ -1357,3 +1358,21 @@ holdReset
   -> Reset dom
 holdReset n =
   hideClockResetEnable (\clk rst en -> E.holdReset clk en n rst)
+
+-- | Like 'fromList', but resets on reset and has a defined reset value.
+--
+-- >>> let rst = unsafeFromHighPolarity (fromList [True, True, False, False, True, False])
+-- >>> let res = withReset0 rst (fromListReset Nothing [Just 'a', Just 'b', Just 'c'])
+-- >>> sampleN @System 6 res
+-- [Nothing,Nothing,Just 'a',Just 'b',Nothing,Just 'a']
+--
+-- __NB__: This function is not synthesizable
+fromListReset
+  :: forall dom a
+   . (HiddenReset dom, Undefined a)
+  => a
+  -> [a]
+  -> Signal dom a
+fromListReset = hideReset E.fromListReset
+{-# INLINE fromListReset #-}
+

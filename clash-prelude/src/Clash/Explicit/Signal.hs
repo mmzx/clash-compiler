@@ -233,6 +233,7 @@ module Clash.Explicit.Signal
   , sample
   , sampleN
   , fromList
+  , fromListReset
     -- ** lazy versions
   , sample_lazy
   , sampleN_lazy
@@ -858,3 +859,25 @@ holdReset clk en SNat rst =
  where
   counter :: Signal dom (Index (n+1))
   counter = register clk rst en 0 (satSucc SatBound <$> counter)
+
+-- | Like 'fromList', but resets on reset and has a defined reset value.
+--
+-- >>> let rst = unsafeFromHighPolarity (fromList [True, True, False, False, True, False])
+-- >>> let res = fromListReset @System rst Nothing [Just 'a', Just 'b', Just 'c']
+-- >>> sampleN 6 res
+-- [Nothing,Nothing,Just 'a',Just 'b',Nothing,Just 'a']
+--
+-- __NB__: This function is not synthesizable
+fromListReset
+  :: forall dom a
+   . (KnownDomain dom, Undefined a)
+  => Reset dom
+  -> a
+  -> [a]
+  -> Signal dom a
+fromListReset rst resetValue vals =
+  go (unsafeToHighPolarity rst) vals
+ where
+  go (r :- rs) _ | r = resetValue :- go rs vals
+  go (_ :- rs) [] = deepErrorX "fromListReset: input ran out" :- go rs []
+  go (_ :- rs) (a : as) = a :- go rs as
