@@ -990,8 +990,7 @@ unsafeFromReset (Reset r) = r
 -- __NB__: You probably want to use 'unsafeFromLowPolarity' or
 -- 'unsafeFromHighPolarity'.
 unsafeToReset
-  :: KnownDomain dom
-  => Signal dom Bool
+  :: Signal dom Bool
   -> Reset dom
 unsafeToReset r = Reset r
 {-# NOINLINE unsafeToReset #-}
@@ -1030,7 +1029,7 @@ unsafeFromLowPolarity r =
   unsafeToReset (if isActiveHigh @dom then not <$> r else r)
 
 -- | Invert reset signal
-invertReset :: KnownDomain dom => Reset dom -> Reset dom
+invertReset :: Reset dom -> Reset dom
 invertReset = unsafeToReset . fmap not . unsafeFromReset
 
 
