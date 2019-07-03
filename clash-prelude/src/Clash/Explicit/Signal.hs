@@ -752,12 +752,12 @@ regEn clk rst gen initial en i =
 -- the reset is asserted. While the reset is asserted, the first value from
 -- @[a]@ is fed to the circuit.
 simulateReset
-  :: forall dom a b n
+  :: forall dom a b m
    . ( KnownDomain dom
      , Undefined a
      , Undefined b
-     , 1 <= n )
-  => SNat n
+     , 1 <= m )
+  => SNat m
   -- ^ Number of cycles to assert the reset
   -> a
   -- ^ Reset value
@@ -770,11 +770,11 @@ simulateReset
   -- ^ Circuit to simulate
   -> [a]
   -> [b]
-simulateReset n resetVal f as =
-  drop (snatToNum n) out
+simulateReset m resetVal f as =
+  drop (snatToNum m) out
  where
-  inp = replicate (snatToNum n) resetVal ++ as
-  rst = resetGenN @dom n
+  inp = replicate (snatToNum m) resetVal ++ as
+  rst = resetGenN @dom m
   clk = clockGen
   en  = enableGen
   out = simulate (f clk rst en) inp
@@ -785,8 +785,8 @@ simulateResetN
   :: ( KnownDomain dom
      , Undefined a
      , Undefined b
-     , 1 <= n )
-  => SNat n
+     , 1 <= m )
+  => SNat m
   -- ^ Number of cycles to assert the reset
   -> a
   -- ^ Reset value

@@ -1072,11 +1072,11 @@ sampleN n s0 =
 --
 -- __NB__: This function is not synthesizable
 sampleReset
-  :: forall dom a n
+  :: forall dom a m
    . ( KnownDomain dom
      , Undefined a
-     , 1 <= n )
-  => SNat n
+     , 1 <= m )
+  => SNat m
   -- ^ Number of cycles to assert the reset
   -> (HiddenClockResetEnable dom => Signal dom a)
   -- ^ 'Signal' to sample, whose source potentially has a hidden clock
@@ -1093,11 +1093,11 @@ sampleReset nReset f0 =
 --
 -- __NB__: This function is not synthesizable
 sampleResetN
-  :: forall dom a n
+  :: forall dom a m
    . ( KnownDomain dom
      , Undefined a
-     , 1 <= n )
-  => SNat n
+     , 1 <= m )
+  => SNat m
   -- ^ Number of cycles to assert the reset
   -> Int
   -- ^ Number of samples to produce
@@ -1202,12 +1202,12 @@ simulateN n f as = simulateResetN (SNat @1) (head as) n f as
 -- the reset is asserted. While the reset is asserted, the reset value /a/ is
 -- supplied to the circuit.
 simulateReset
-  :: forall dom a b n
+  :: forall dom a b m
    . ( KnownDomain dom
      , Undefined a
      , Undefined b
-     , 1 <= n )
-  => SNat n
+     , 1 <= m )
+  => SNat m
   -- ^ Number of cycles to assert the reset
   -> a
   -- ^ Reset value
@@ -1222,12 +1222,12 @@ simulateReset n resetVal f as =
 
 -- | Same as 'simulateReset', but only sample the first /Int/ output values.
 simulateResetN
-  :: forall dom a b n
+  :: forall dom a b m
    . ( KnownDomain dom
      , Undefined a
      , Undefined b
-     , 1 <= n )
-  => SNat n
+     , 1 <= m )
+  => SNat m
   -- ^ Number of cycles to assert the reset
   -> a
   -- ^ Reset value
@@ -1353,14 +1353,14 @@ unsafeSynchronizer =
 -- of 3 clock cycles where the reset is asserted.
 --
 holdReset
-  :: forall dom n
+  :: forall dom m
    . HiddenClockResetEnable dom
-  => SNat n
-  -- ^ Hold for /n/ cycles, counting from the moment the incoming reset
+  => SNat m
+  -- ^ Hold for /m/ cycles, counting from the moment the incoming reset
   -- signal becomes deasserted.
   -> Reset dom
-holdReset n =
-  hideClockResetEnable (\clk rst en -> E.holdReset clk en n rst)
+holdReset m =
+  hideClockResetEnable (\clk rst en -> E.holdReset clk en m rst)
 
 -- | Like 'fromList', but resets on reset and has a defined reset value.
 --
