@@ -8,6 +8,8 @@ Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 
 {-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TypeApplications    #-}
+{-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE TypeOperators       #-}
 
 {-# LANGUAGE Unsafe #-}
@@ -21,9 +23,17 @@ module Clash.Explicit.Testbench
   ( -- * Testbench functions for circuits
     assert
   , ignoreFor
+  , stimuliGenerator
+
   , outputVerifier
   , outputVerifierBitVector
-  , stimuliGenerator
+  , tbClockGen
+  , tbEnableGen
+  , tbSystemClockGen
+
+  , biDomainOutputVerifier
+  , biDomainOutputVerifierBitVector
+  , biTbClockGen
   )
 where
 
@@ -35,10 +45,13 @@ import System.IO.Unsafe      (unsafeDupablePerformIO)
 
 import Clash.Annotations.Primitive (hasBlackBox)
 import Clash.Class.Num       (satSucc, SaturationMode(SatBound))
-import Clash.Promoted.Nat    (SNat(..))
+import Clash.Promoted.Nat    (SNat(..), snatToNum)
 import Clash.Explicit.Signal
-  (Clock, Reset, Signal, toEnable, fromList, register, unbundle)
-import Clash.Signal          (mux, KnownDomain, Reset(..), Enable)
+  (Clock, Reset, System, Signal, clockPeriod, toEnable, fromList, register,
+  unbundle, unsafeSynchronizer, veryUnsafeSynchronizer, clockGen)
+import Clash.Signal
+  (mux, DomainResetKind, ResetKind(Asynchronous), KnownDomain, Reset(..),
+  Enable)
 import Clash.Sized.Index     (Index)
 import Clash.Sized.Internal.BitVector
   (BitVector, isLike)
@@ -46,7 +59,7 @@ import Clash.Sized.Vector    (Vec, (!!), length)
 import Clash.XException      (ShowX (..), XException)
 
 {- $setup
->>> :set -XTemplateHaskell -XDataKinds
+>>> :set -XTemplateHaskell -XDataKinds -XTypeFamilies
 >>> import Clash.Explicit.Prelude
 >>> let testInput clk rst = stimuliGenerator clk rst $(listToVecTH [(1::Int),3..21])
 >>> let expectedOutput clk rst = outputVerifier clk rst $(listToVecTH ([70,99,2,3,4,5,7,8,9,10]::[Int]))
@@ -208,29 +221,63 @@ stimuliGenerator clk rst samples =
 -- expected value: 10, not equal to actual value: 9
 -- ,False,True]
 --
--- If your working with 'BitVector's containing don't care bit you should use 'outputVerifierBitVector'.
+-- If your working with 'BitVector's containing don't care bit you should
+-- use 'outputVerifierBitVector'.
 outputVerifier
-  :: forall l dom   a
+  :: forall l a dom
    . ( KnownNat l
      , KnownDomain dom
+     , DomainResetKind dom ~ 'Asynchronous
      , Eq a
      , ShowX a )
   => Clock dom
-  -- ^ Clock to which the input signal is synchronized to
+  -- ^ Clock to which the testbench is synchronized to (but not necessarily
+  -- the circuit under test)
   -> Reset dom
+  -- ^ Asynchronous
   -> Vec l a
   -- ^ Samples to compare with
   -> Signal dom a
   -- ^ Signal to verify
   -> Signal dom Bool
   -- ^ Indicator that all samples are verified
-outputVerifier clk rst samples i =
-    let en    = toEnable (pure True)
+outputVerifier =
+  biDomainOutputVerifier @l @a @dom @dom
+{-# INLINABLE outputVerifier #-}
+
+-- | Same as 'biDomainOutputVerifier', but can be used in situations where
+-- the circuit under test runs in a different domain than the circuit testing
+-- it. Most commonly used to test synchronous circuits (with an asynchronous
+-- test circuit).
+biDomainOutputVerifier
+  :: forall l a testDom circuitDom
+   . ( KnownNat l
+     , KnownDomain testDom
+     , KnownDomain circuitDom
+     , DomainResetKind testDom ~ 'Asynchronous
+     , Eq a
+     , ShowX a )
+  => Clock testDom
+  -- ^ Clock to which the testbench is synchronized to (but not necessarily
+  -- the circuit under test)
+  -> Reset testDom
+  -- ^ Asynchronous
+  -> Vec l a
+  -- ^ Samples to compare with
+  -> Signal circuitDom a
+  -- ^ Signal to verify
+  -> Signal testDom Bool
+  -- ^ Indicator that all samples are verified
+biDomainOutputVerifier clk rst samples i0 =
+    let t1    = snatToNum (clockPeriod @circuitDom)
+        t2    = snatToNum (clockPeriod @testDom)
+        i1    = veryUnsafeSynchronizer t1 t2 i0
+        en    = toEnable (pure True)
         (s,o) = unbundle (genT <$> register clk rst en 0 s)
         (e,f) = unbundle o
         f'    = register clk rst en False f
         -- Only assert while not finished
-    in  mux f' f' $ assert clk rst "outputVerifier" i e f'
+    in  mux f' f' $ assert clk rst "outputVerifier" i1 e f'
   where
     genT :: Index l -> (Index l,(a,Bool))
     genT s = (s',(samples !! s,finished))
@@ -242,7 +289,7 @@ outputVerifier clk rst samples i =
                 else s
 
         finished = s == maxI
-{-# INLINABLE outputVerifier #-}
+{-# INLINABLE biDomainOutputVerifier #-}
 
 -- | Same as 'outputVerifier', but can handle don't care bits in it's expected
 -- values.
@@ -251,6 +298,7 @@ outputVerifierBitVector
    . ( KnownNat l
      , KnownNat n
      , KnownDomain dom
+     , DomainResetKind dom ~ 'Asynchronous
      )
   => Clock dom
   -- ^ Clock to which the input signal is synchronized to
@@ -261,13 +309,39 @@ outputVerifierBitVector
   -- ^ Signal to verify
   -> Signal dom Bool
   -- ^ Indicator that all samples are verified
-outputVerifierBitVector clk rst samples i =
-    let en    = toEnable (pure True)
+outputVerifierBitVector =
+  biDomainOutputVerifierBitVector @l @n @dom @dom
+{-# INLINABLE outputVerifierBitVector #-}
+
+-- | Same as 'biDomainOutputVerifier', but can handle don't care bits in it's
+-- expected values.
+biDomainOutputVerifierBitVector
+  :: forall l n testDom circuitDom
+   . ( KnownNat l
+     , KnownNat n
+     , KnownDomain testDom
+     , KnownDomain circuitDom
+     , DomainResetKind testDom ~ 'Asynchronous
+     )
+  => Clock testDom
+  -- ^ Clock to which the input signal is synchronized to
+  -> Reset testDom
+  -> Vec l (BitVector n)
+  -- ^ Samples to compare with
+  -> Signal circuitDom (BitVector n)
+  -- ^ Signal to verify
+  -> Signal testDom Bool
+  -- ^ Indicator that all samples are verified
+biDomainOutputVerifierBitVector clk rst samples i0 =
+    let t1    = snatToNum (clockPeriod @circuitDom)
+        t2    = snatToNum (clockPeriod @testDom)
+        i1    = veryUnsafeSynchronizer t1 t2 i0
+        en    = toEnable (pure True)
         (s,o) = unbundle (genT <$> register clk rst en 0 s)
         (e,f) = unbundle o
         f'    = register clk rst en False f
         -- Only assert while not finished
-    in  mux f' f' $ assertBitVector clk rst "outputVerifierBitVector" i e f'
+    in  mux f' f' $ assertBitVector clk rst "outputVerifierBitVector" i1 e f'
   where
     genT :: Index l -> (Index l,(BitVector n,Bool))
     genT s = (s',(samples !! s,finished))
@@ -279,7 +353,7 @@ outputVerifierBitVector clk rst samples i =
                 else s
 
         finished = s == maxI
-{-# INLINABLE outputVerifierBitVector #-}
+{-# INLINABLE biDomainOutputVerifierBitVector #-}
 
 -- | Ignore signal for a number of cycles, while outputting a static value.
 ignoreFor
@@ -302,3 +376,107 @@ ignoreFor clk rst en SNat a i =
  where
   counter :: Signal dom (Index (n+1))
   counter = register clk rst en 0 (satSucc SatBound <$> counter)
+
+-- | Same as 'tbClockGen', but returns two clocks on potentially different
+-- domains. To be used in situations where the circuit under test runs
+-- in a different domain than the circuit testing it. Most commonly used
+-- to test synchronous circuits (with an asynchronous test circuit).
+biTbClockGen
+  :: forall testDom circuitDom
+   . ( KnownDomain testDom
+     , KnownDomain circuitDom
+     , DomainResetKind testDom ~ 'Asynchronous
+     )
+  => Signal testDom Bool
+  -> (Clock testDom, Clock circuitDom)
+biTbClockGen done = (testClk, circuitClk)
+ where
+  testClk = tbClockGen done
+  circuitClk = tbClockGen (unsafeSynchronizer testClk circuitClk done)
+
+-- | Clock generator to be used in the /testBench/ function.
+--
+-- To be used like:
+--
+-- @
+-- clkSystem en = tbClockGen @System en
+-- @
+--
+-- === __Example__
+--
+-- @
+-- module Example where
+--
+-- import "Clash.Explicit.Prelude"
+-- import "Clash.Explicit.Testbench"
+--
+-- -- Fast domain: twice as fast as \"Slow\"
+-- 'createDomain' 'vSystem'{vTag=\"Fast\", vPeriod=10}
+--
+-- -- Slow domain: twice as slow as "Fast"
+-- 'createDomain' 'vSystem'{vTag=\"Slow\", vPeriod=20}
+--
+-- topEntity
+--   :: 'Clock' \"Fast\"
+--   -> 'Reset' \"Fast\"
+--   -> 'Enable' \"Fast\"
+--   -> 'Clock' \"Slow\"
+--   -> 'Signal' \"Fast\" (Unsigned 8)
+--   -> 'Signal' \"Slow\" (Unsigned 8, Unsigned 8)
+-- topEntity clk1 rst1 en1 clk2 i =
+--   let h = register clk1 rst1 en1 0 (register clk1 rst1 en1 0 i)
+--       l = register clk1 rst1 en1 0 i
+--   in  unsafeSynchronizer clk1 clk2 (bundle (h, l))
+--
+-- testBench
+--   :: 'Signal' \"Slow\" Bool
+-- testBench = done
+--   where
+--     testInput      = 'Clash.Explicit.Testbench.stimuliGenerator' clkA1 rstA1 $('listToVecTH' [1::Unsigned 8,2,3,4,5,6,7,8])
+--     expectedOutput = 'Clash.Explicit.Testbench.outputVerifier'   clkB2 rstB2 $('listToVecTH' [(0,0) :: (Unsigned 8, Unsigned 8),(1,2),(3,4),(5,6),(7,8)])
+--     done           = expectedOutput (topEntity clkA1 rstA1 enableGen clkB2 testInput)
+--     done'          = not \<$\> done
+--     clkA1          = 'tbClockGen' \@\"Fast\" (unsafeSynchronizer clkB2 clkA1 done')
+--     clkB2          = 'tbClockGen' \@\"Slow\" done'
+--     rstA1          = 'resetGen' \@\"Fast\"
+--     rstB2          = 'resetGen' \@\"Slow\"
+-- @
+tbClockGen
+  :: KnownDomain testDom
+  => Signal testDom Bool
+  -> Clock testDom
+tbClockGen _done = clockGen
+{-# NOINLINE tbClockGen #-}
+{-# ANN tbClockGen hasBlackBox #-}
+
+-- | Enable signal that's always enabled. Because it has a blackbox definition
+-- this enable signal is opaque to other blackboxes. It will therefore never
+-- be optimized away.
+tbEnableGen :: Enable tag
+tbEnableGen = toEnable (pure True)
+{-# NOINLINE tbEnableGen #-}
+{-# ANN tbEnableGen hasBlackBox #-}
+
+-- | Clock generator for the 'System' clock domain.
+--
+-- __NB__: can be used in the /testBench/ function
+--
+-- === __Example__
+--
+-- @
+-- topEntity :: Vec 2 (Vec 3 (Unsigned 8)) -> Vec 6 (Unsigned 8)
+-- topEntity = concat
+--
+-- testBench :: Signal System Bool
+-- testBench = done
+--   where
+--     testInput      = pure ((1 :> 2 :> 3 :> Nil) :> (4 :> 5 :> 6 :> Nil) :> Nil)
+--     expectedOutput = outputVerifier ((1:>2:>3:>4:>5:>6:>Nil):>Nil)
+--     done           = exposeClockResetEnable (expectedOutput (topEntity <$> testInput)) clk rst
+--     clk            = 'tbSystemClockGen' (not <\$\> done)
+--     rst            = systemResetGen
+-- @
+tbSystemClockGen
+  :: Signal System Bool
+  -> Clock System
+tbSystemClockGen = tbClockGen

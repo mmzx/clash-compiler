@@ -2,6 +2,7 @@ module Multiply where
 
 import Clash.CoSim
 import Clash.Explicit.Prelude
+import Clash.Explicit.Testbench
 
 verilog_mult
   :: KnownDomain d

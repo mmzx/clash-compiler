@@ -3,6 +3,7 @@
 module ResetLow where
 
 import Clash.Explicit.Prelude
+import Clash.Explicit.Testbench
 
 createDomain vSystem{vTag="SystemLow", vPolarity=ActiveLow}
 

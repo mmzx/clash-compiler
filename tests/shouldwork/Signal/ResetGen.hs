@@ -1,6 +1,7 @@
 module ResetGen where
 
 import Clash.Explicit.Prelude
+import Clash.Explicit.Testbench
 
 topEntity
   :: Clock System

@@ -196,12 +196,9 @@ module Clash.Signal
   , mux
     -- * Simulation and testbench functions
   , clockGen
-  , tbClockGen
-  , tbEnableGen
   , resetGen
   , resetGenN
   , systemClockGen
-  , tbSystemClockGen
   , systemResetGen
     -- * Boolean connectives
   , (.&&.), (.||.)
@@ -252,7 +249,7 @@ import           Test.QuickCheck       (Property, property)
 
 import qualified Clash.Explicit.Signal as E
 import           Clash.Explicit.Signal
-  (System, resetSynchronizer, systemClockGen, systemResetGen, tbSystemClockGen)
+  (System, resetSynchronizer, systemClockGen, systemResetGen)
 import qualified Clash.Explicit.Signal as S
 import           Clash.Hidden
 import           Clash.Promoted.Nat    (SNat (..), snatToNum)

@@ -1,5 +1,6 @@
 module SyncTB where
 
+import Clash.Explicit.Testbench
 import Clash.Explicit.Prelude
 import Clash.Signal (mux)
 

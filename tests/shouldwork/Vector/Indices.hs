@@ -1,6 +1,7 @@
 module Indices where
 
 import Clash.Explicit.Prelude
+import Clash.Explicit.Testbench
 
 topEntity
   :: Vec 2 (Index 2)

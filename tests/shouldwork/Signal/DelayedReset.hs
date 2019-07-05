@@ -3,6 +3,7 @@ module DelayedReset where
 
 import Clash.Explicit.Prelude
 import Clash.Annotations.TopEntity
+import Clash.Explicit.Testbench
 
 topEntity
   :: Clock System

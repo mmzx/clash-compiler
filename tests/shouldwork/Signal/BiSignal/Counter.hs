@@ -11,6 +11,7 @@ import Data.Int
 import Debug.Trace
 import qualified Prelude as P
 import Clash.Explicit.Prelude hiding (even, odd)
+import Clash.Explicit.Testbench
 import Clash.Signal hiding (sampleN)
 
 -- | Alternatively read / increment+write

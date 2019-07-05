@@ -6,7 +6,9 @@ License    :  BSD2 (see the file LICENSE)
 Maintainer :  Christiaan Baaij <christiaan.baaij@gmail.com>
 -}
 
+{-# LANGUAGE DataKinds           #-}
 {-# LANGUAGE FlexibleContexts    #-}
+{-# LANGUAGE TypeFamilies        #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 {-# LANGUAGE Unsafe #-}
@@ -20,6 +22,10 @@ module Clash.Prelude.Testbench
   , outputVerifier
   , outputVerifierBitVector
   , stimuliGenerator
+
+  , E.tbClockGen
+  , E.tbEnableGen
+  , E.tbSystemClockGen
   )
 where
 
@@ -27,8 +33,8 @@ import GHC.TypeLits                       (KnownNat)
 
 import qualified Clash.Explicit.Testbench as E
 import           Clash.Signal
-  (HiddenClock, HiddenReset, HiddenClockResetEnable, Signal, hideClock,
-  hideReset, hideClockResetEnable)
+  (HiddenClock, HiddenReset, HiddenClockResetEnable, Signal,
+  DomainResetKind, ResetKind(Asynchronous), hideClock, hideReset, hideClockResetEnable)
 import Clash.Promoted.Nat                 (SNat)
 import Clash.Sized.BitVector              (BitVector)
 import Clash.Sized.Vector                 (Vec)
@@ -61,9 +67,6 @@ assert
   -> Signal dom b
 assert msg actual expected ret =
   hideReset (hideClock E.assert) msg actual expected ret
-
---assert {-msg actual expected ret-} =
---  hideReset (hideClock E.assert) {-msg actual expected ret-}
 {-# INLINE assert #-}
 
 -- | To be used as one of the functions to create the \"magical\" 'testInput'
@@ -132,6 +135,7 @@ outputVerifier
   :: ( KnownNat l
      , Eq a
      , ShowX a
+     , DomainResetKind dom ~ 'Asynchronous
      , HiddenClock dom
      , HiddenReset dom  )
   => Vec l a
@@ -149,6 +153,7 @@ outputVerifier = hideReset (hideClock E.outputVerifier)
 outputVerifierBitVector
   :: ( KnownNat l
      , KnownNat n
+     , DomainResetKind dom ~ 'Asynchronous
      , HiddenClock dom
      , HiddenReset dom  )
   => Vec l (BitVector n)

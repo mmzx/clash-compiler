@@ -1,6 +1,7 @@
 module TestMap where
 
 import Clash.Explicit.Prelude
+import Clash.Explicit.Testbench
 
 createDomain vSystem{vTag="System50", vPeriod=50000}
 
