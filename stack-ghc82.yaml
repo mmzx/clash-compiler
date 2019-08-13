@@ -1,0 +1,19 @@
+resolver: lts-11.22
+
+packages:
+- clash-prelude
+- clash-lib
+- clash-ghc
+# - testsuite # still uses cabal new-build internally
+
+extra-deps:
+- ./clash-cosim
+- type-errors-0.2.0.0@sha256:b8f97a0cf72f4fcdc9bfd02d753f84e65e5e5d165d53f82947a95cdcbd7f2945
+- first-class-families-0.5.0.0@sha256:6e1488c502d5b1e780739a53edab65a307c6bf94d4232fab70e696e87f0fa087
+# 8.2
+- ghc-typelits-knownnat-0.6@sha256:d288c03e68cd9a16c035357e2b6a96ea1bf114ff9b3bfa1b7e3702b921580805
+- ghc-typelits-natnormalise-0.6.2@sha256:b458ecd177c5a4fd2fd1220d8daafbe9e4eddde00f4c89bcc55b662ab89bf6ff
+- ghc-tcplugins-extra-0.3@sha256:6b1f07e94f5286f42b86d328a44e010c46615b8eeb55a825cece435aee224d74
+
+- git: https://github.com/clash-lang/ghc-typelits-extra
+  commit: a8de0b68b8216411cb862195354f251cd41bae50
